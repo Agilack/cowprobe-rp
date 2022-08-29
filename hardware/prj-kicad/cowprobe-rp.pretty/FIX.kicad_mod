@@ -1,0 +1,14 @@
+(footprint "FIX" (version 20211014) (generator pcbnew)
+  (layer "F.Cu")
+  (tedit 5EE7EE5F)
+  (attr through_hole)
+  (fp_text reference "REF**" (at 0 1) (layer "F.SilkS") hide
+    (effects (font (size 0.2 0.2) (thickness 0.05)))
+    (tstamp f2c93195-af12-4d3e-acdf-bdd0ff675c24)
+  )
+  (fp_text value "FIX" (at 0 -1) (layer "F.Fab") hide
+    (effects (font (size 0.2 0.2) (thickness 0.05)))
+    (tstamp 240e07e1-770b-4b27-894f-29fd601c924d)
+  )
+  (pad "1" thru_hole circle (at 0 0) (size 3.5 3.5) (drill 2.5) (layers *.Cu *.Mask) (tstamp 003c2200-0632-4808-a662-8ddd5d30c768))
+)

@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name "cowprobe-rp")(type "KiCad")(uri "${KIPRJMOD}/cowprobe-rp.kicad_sym")(options "")(descr ""))
+)
