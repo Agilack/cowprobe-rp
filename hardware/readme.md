@@ -8,9 +8,7 @@ CAD source
 ----------
 
 This board has been designed using KiCad EDA (version 6). All sources files
-(schematics, routing, ...) are available into the `prj-kicad` folder. You can
-re-use this design under terms of the Creative Commons  ShareAlike license
-(CC-by-SA).
+(schematics, routing, ...) are available into the `prj-kicad` folder.
 
 <table>
 <tr>
@@ -24,3 +22,10 @@ re-use this design under terms of the Creative Commons  ShareAlike license
 </table>
 
 ![PCB 3D preview](doc/kicad-3d.png)
+
+License
+-------
+
+This project is OpenHardware. You can use (and/or modify) this project under
+terms of the Creative Commons ShareAlike license (CC-by-SA).
+See [LICENSE.md](LICENSE.md).
