@@ -1,0 +1,4 @@
+build
+
+# Ignore editor temporary files
+*~
