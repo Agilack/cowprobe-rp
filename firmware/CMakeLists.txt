@@ -19,6 +19,8 @@ add_executable(${PROJECT_NAME}
 	main.c
 	serial.c
 	usb.c
+	log.c
+	cmsis.c
 )
 
 # Create map/bin/hex/uf2 files

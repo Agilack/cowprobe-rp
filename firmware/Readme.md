@@ -9,6 +9,19 @@ To compile this firmware, the lastest stable version of RP2040 SDK (1.4.0) must
 be installed first (see raspberry-pi website). The compiler used for development
 is GCC 10.3.
 
+Features and TODO
+-----------------
+
+- [x] Virtual communication port (usb-cdc) bridge to physical UART
+- [x] CMSIS-DAP interface to SWD target
+  - [x] USB interface (WiP)
+  - [ ] DAP commands and data transfer
+- [x] Configure IOs
+  - [ ] Mode SWD
+  - [ ] Mode JTAG
+- [ ] Network
+- [ ] Plugins
+
 License
 -------
 

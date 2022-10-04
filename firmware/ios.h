@@ -16,6 +16,9 @@
 #ifndef IOS_H
 #define IOS_H
 
+#define LOG_TX_PIN  0
+#define LOG_RX_PIN  1
+
 #define UART_TX_PIN 8
 #define UART_RX_PIN 9
 

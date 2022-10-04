@@ -1,6 +1,6 @@
 /**
- * @file  usb.h
- * @brief Headers and definitions for usb module
+ * @file  log.h
+ * @brief Headers and definitions for log and debug module
  *
  * @author Saint-Genest Gwenael <gwen@cowlab.fr>
  * @copyright Cowlab (c) 2022
@@ -13,12 +13,11 @@
  * for more details.
  * This program is distributed WITHOUT ANY WARRANTY.
  */
-#ifndef USB_H
-#define USB_H
+#ifndef LOG_H
+#define LOG_H
 
-#define USB_CMSIS_IF  4
-
-void usb_init(void);
-void usb_task(void);
+void log_init  (void);
+void log_puthex(const uint32_t c, const uint8_t len);
+void log_puts  (char *s);
 
 #endif

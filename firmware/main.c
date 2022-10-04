@@ -14,6 +14,8 @@
  * This program is distributed WITHOUT ANY WARRANTY.
  */
 #include "pico/stdlib.h"
+#include "cmsis.h"
+#include "log.h"
 #include "serial.h"
 #include "usb.h"
 
@@ -27,7 +29,9 @@
 int main()
 {
 	/* Initialize all modules */
+	log_init();
 	serial_init();
+	cmsis_init();
 	usb_init();
 
 	while(1)

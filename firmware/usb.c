@@ -15,7 +15,11 @@
  */
 #include "pico/stdlib.h"
 #include <tusb.h>
+#include <device/usbd_pvt.h>
+#include "cmsis.h"
 #include "serial.h"
+#include "log.h"
+#include "usb.h"
 
 static void cdc_task(void);
 
@@ -29,6 +33,7 @@ static void cdc_task(void);
  */
 void usb_init(void)
 {
+	log_puts("USB initialization\r\n");
 	tusb_init();
 }
 
@@ -130,14 +135,16 @@ void tud_cdc_rx_cb(uint8_t itf)
 
 static const uint8_t usb_desc_config[] =
 {
-	TUD_CONFIG_DESCRIPTOR(1, 4, 0, (TUD_CONFIG_DESC_LEN + CFG_TUD_CDC * TUD_CDC_DESC_LEN), 0x00, 100),
+	TUD_CONFIG_DESCRIPTOR(1, 5, 0, (TUD_CONFIG_DESC_LEN + CFG_TUD_CDC * TUD_CDC_DESC_LEN + 23), 0x00, 100),
 	TUD_CDC_DESCRIPTOR(0, 4, 0x81, 8, 0x02, 0x83, 64),
 	TUD_CDC_DESCRIPTOR(2, 4, 0x84, 8, 0x05, 0x86, 64),
+	/* CMSIS v2 Descriptor */
+	TUD_CMSIS_DESCRIPTOR(USB_CMSIS_IF, 0, 0x07, 0x88, 64),
 };
 
 const uint8_t  str_lang[]    = {0x04,0x03,0x09,0x04};
 const uint16_t str_manuf[]   = {0x030E, 'C','o','w','l','a','b'};
-const uint16_t str_product[] = {0x0312, 'C','o','w','p','r','o','b','e'};
+const uint16_t str_product[] = {0x0326, 'C','o','w','p','r','o','b','e', ' ', 'C','M','S','I','S','-','D','A','P'};
 const uint16_t str_serial[]  = {0x030A, '0','1','2','3'};
 const uint16_t str_extra[]   = {0x030A, 'p','l','o','p'};
 
@@ -156,6 +163,18 @@ static const tusb_desc_device_t usbd_desc_device = {
 	.iProduct      = USBD_STR_PRODUCT,
 	.iSerialNumber = USBD_STR_SERIAL,
 	.bNumConfigurations = 1,
+};
+
+static const usbd_class_driver_t usbd_custom_class_drv = {
+#if CFG_TUSB_DEBUG >= 2
+	.name = "cmsis-dap",
+#endif
+	.init            = cmsis_usb_init,
+	.open            = cmsis_usb_open,
+	.reset           = cmsis_usb_reset,
+	.control_xfer_cb = cmsis_usb_ctl,
+	.xfer_cb         = cmsis_usb_xfer,
+	.sof             = 0,
 };
 
 /**
@@ -180,6 +199,21 @@ const uint8_t *tud_descriptor_configuration_cb(uint8_t index)
 const uint8_t *tud_descriptor_device_cb(void)
 {
 	return (const uint8_t *)&usbd_desc_device;
+}
+
+usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
+{
+	int count = 0;
+
+	log_puts("usbd_app_driver_get_cb()\r\n");
+
+	count ++; // CMSIS
+
+	if (driver_count != 0)
+	{
+		*driver_count = count;
+	}
+	return(&usbd_custom_class_drv);
 }
 
 /**
