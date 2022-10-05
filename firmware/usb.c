@@ -34,6 +34,9 @@ static void cdc_task(void);
 void usb_init(void)
 {
 	log_puts("USB initialization\r\n");
+#ifdef USE_CMSIS
+	cmsis_init();
+#endif
 	tusb_init();
 }
 
@@ -133,13 +136,22 @@ void tud_cdc_rx_cb(uint8_t itf)
 #define USBD_STR_PRODUCT 0x02
 #define USBD_STR_SERIAL  0x03
 
+#ifdef USE_CMSIS
+#define CMSIS_LEN 23
+#else
+#define CMSIS_LEN  0
+#endif
+#define USBD_CFG_LEN (TUD_CONFIG_DESC_LEN + (CFG_TUD_CDC * TUD_CDC_DESC_LEN) + CMSIS_LEN)
+
 static const uint8_t usb_desc_config[] =
 {
-	TUD_CONFIG_DESCRIPTOR(1, 5, 0, (TUD_CONFIG_DESC_LEN + CFG_TUD_CDC * TUD_CDC_DESC_LEN + 23), 0x00, 100),
-	TUD_CDC_DESCRIPTOR(0, 4, 0x81, 8, 0x02, 0x83, 64),
-	TUD_CDC_DESCRIPTOR(2, 4, 0x84, 8, 0x05, 0x86, 64),
+	TUD_CONFIG_DESCRIPTOR(1, 5, 0, USBD_CFG_LEN, 0x00, 100),
+	TUD_CDC_DESCRIPTOR(TUD_ITF_CDC, 4, 0x81, 8, 0x02, 0x83, 64),
+	TUD_CDC_DESCRIPTOR(TUD_ITF_LOG, 4, 0x84, 8, 0x05, 0x86, 64),
+#ifdef USE_CMSIS
 	/* CMSIS v2 Descriptor */
-	TUD_CMSIS_DESCRIPTOR(USB_CMSIS_IF, 0, 0x07, 0x88, 64),
+	TUD_CMSIS_DESCRIPTOR(TUD_ITF_CMSIS, 0, 0x07, 0x88, 64),
+#endif
 };
 
 const uint8_t  str_lang[]    = {0x04,0x03,0x09,0x04};
@@ -165,7 +177,9 @@ static const tusb_desc_device_t usbd_desc_device = {
 	.bNumConfigurations = 1,
 };
 
-static const usbd_class_driver_t usbd_custom_class_drv = {
+static const usbd_class_driver_t usbd_custom_class_drv[] = {
+#ifdef USE_CMSIS
+{
 #if CFG_TUSB_DEBUG >= 2
 	.name = "cmsis-dap",
 #endif
@@ -175,6 +189,8 @@ static const usbd_class_driver_t usbd_custom_class_drv = {
 	.control_xfer_cb = cmsis_usb_ctl,
 	.xfer_cb         = cmsis_usb_xfer,
 	.sof             = 0,
+}
+#endif
 };
 
 /**
@@ -201,19 +217,28 @@ const uint8_t *tud_descriptor_device_cb(void)
 	return (const uint8_t *)&usbd_desc_device;
 }
 
+/**
+ * @brief Register list of custom class drivers
+ *
+ * @param driver_count Pointer used to return the number of custom drivers
+ * @return Pointer to an array of custo class drivers structures
+ */
 usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
 {
 	int count = 0;
 
-	log_puts("usbd_app_driver_get_cb()\r\n");
+#ifdef USE_CMSIS
+	count ++;
+#endif
 
-	count ++; // CMSIS
+	log_puts("USBD: Register ");
+	log_puthex(count, 8);
+	log_puts(" class drivers.\r\n");
 
 	if (driver_count != 0)
-	{
 		*driver_count = count;
-	}
-	return(&usbd_custom_class_drv);
+
+	return(usbd_custom_class_drv);
 }
 
 /**

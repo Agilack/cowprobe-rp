@@ -16,9 +16,20 @@
 #ifndef USB_H
 #define USB_H
 
-#define USB_CMSIS_IF  4
+#define USE_CMSIS
 
 void usb_init(void);
 void usb_task(void);
+
+enum USB_INTERFACES
+{
+	TUD_ITF_CDC = 0,
+	TUD_ITF_CDC_DATA,
+	TUD_ITF_LOG,
+	TUD_ITF_LOG_DATA,
+#ifdef USE_CMSIS
+	TUD_ITF_CMSIS
+#endif
+};
 
 #endif

@@ -25,6 +25,12 @@
 	7, TUSB_DESC_ENDPOINT, ep_out, TUSB_XFER_BULK, U16_TO_U8S_LE(ep_size), 1, \
 	7, TUSB_DESC_ENDPOINT, ep_in,  TUSB_XFER_BULK, U16_TO_U8S_LE(ep_size), 1
 
+typedef struct s_cmsis_pkt
+{
+	uint8_t  *buffer;
+	uint16_t  len;
+} cmsis_pkt;
+
 void cmsis_init (void);
 
 /* TinyUSB class driver functions */
