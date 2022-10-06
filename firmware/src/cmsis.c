@@ -23,6 +23,9 @@
 
 #define RX_SIZE 256
 
+static uint8_t  cmsis_mode;
+static uint16_t cmsis_clock;
+/* USB and communication buffers */
 static uint8_t ep_in_n;
 static uint8_t ep_out_n;
 static uint8_t rx_buffer[RX_SIZE];
@@ -38,6 +41,8 @@ static uint8_t tx_buffer[256];
 void cmsis_init(void)
 {
 	log_puts("cmsis_init()\r\n");
+	cmsis_mode  = 0; // 0:Unused 1:SWD 2:JTAG
+	cmsis_clock = 0;
 	ep_in_n  = 0;
 	ep_out_n = 0;
 }
@@ -73,7 +78,8 @@ void dap_recv(uint8_t *rx, uint16_t len)
 		{
 			log_puts("CMSIS: Get Capabilities\r\n");
 			rsp.buffer[1] = 1;
-			rsp.buffer[2] = (1 << 0);
+			rsp.buffer[2] = (1 << 0) | // SWD
+			                (1 << 1);  // JTAG
 			rsp.len = 3;
 			result = 0;
 		}
@@ -91,18 +97,124 @@ void dap_recv(uint8_t *rx, uint16_t len)
 			dap_str(&rsp, str_version);
 			result = 0;
 		}
+		/* Packet Count */
+		else if (req.buffer[1] == 0xFE)
+		{
+			log_puts("CMSIS: Get packet count (1)\r\n");
+			rsp.buffer[1] = 1; // Response size
+			rsp.buffer[2] = 1; // Packet count = 1
+			rsp.len = 3;
+			result = 0;
+		}
+		/* Packet Size */
+		else if (req.buffer[1] == 0xFF)
+		{
+			log_puts("CMSIS: Get packet size (64)\r\n");
+			rsp.buffer[1] = 2;    // Response size
+			rsp.buffer[2] = 0x40; // Packet size = 64
+			rsp.buffer[3] = 0x00;
+			rsp.len = 4;
+			result = 0;
+		}
 	}
 	/* DAP_Connect */
 	else if (req.buffer[0] == 0x02)
 	{
 		rsp.buffer[0] = 2;
-		log_puts("CMSIS: Connect\r\n");
+		log_puts("CMSIS: Connect ");
+		log_puthex(req.buffer[1], 8);
+		log_puts("\r\n");
 		/* If request port is SWD (or Default) */
 		if ((req.buffer[1] == 1) || (req.buffer[1] == 0))
+		{
+			cmsis_mode = 1;
+			ios_mode(PORT_MODE_SWD);
+			/* Response: cmsis mode is now SWD */
 			rsp.buffer[1] = 0x01;
+		}
+		/* If request port is JTAG */
+		else if (req.buffer[1] == 2)
+		{
+			cmsis_mode = 2;
+			ios_mode(PORT_MODE_JTAG);
+			/* Response: cmsis mode is now JTAG */
+			rsp.buffer[1] = 0x02;
+		}
 		/* For all other ports, Initialization Failed */
 		else
 			rsp.buffer[1] = 0x00;
+		rsp.len = 2;
+		result = 0;
+	}
+	/* DAP_SWJ_Pins */
+	else if (req.buffer[0] == 0x10)
+	{
+		uint8_t output = req.buffer[1];
+		uint8_t select = req.buffer[2];
+		uint8_t wait   = req.buffer[3];
+		uint8_t sig;
+
+		log_puts("CMSIS: Set DAP_SWJ pins\r\n");
+
+		/* Bit0: TCK/SWD-CLK */
+		if (select & (1 << 0))
+		{
+			sig = (output & (1 << 0)) ? 1 : 0;
+			ios_pin_set(PORT_D1_PIN, sig);
+		}
+		/* Bit1: TMS/SWD-DAT */
+		if (select & (1 << 1))
+		{
+			sig = (output & (1 << 1)) ? 1 : 0;
+			ios_pin_set(PORT_D2_PIN, sig);
+		}
+		/* Bit3: TDO */
+		if (select & (1 << 3))
+		{
+			/* TDO signal available only in JTAG mode */
+			if (cmsis_mode == 2)
+			{
+				sig = (output & (1 << 3)) ? 1 : 0;
+				ios_pin_set(PORT_D3_PIN, sig);
+			}
+		}
+		/* Bit5: nTRST */
+		if (select & (1 << 5))
+		{
+			/* nTRST is not available */
+		}
+		/* Bit7: nReset */
+		if (select & (1 << 7))
+		{
+			/* Reset signal available only in SWD mode */
+			if (cmsis_mode == 1)
+			{
+				sig = (output & (1 << 7)) ? 1 : 0;
+				ios_pin_set(PORT_D3_PIN, sig);
+			}
+		}
+		/* TODO: Handle wait argument */
+		(void)wait;
+
+		/* Insert current IOs values into response */
+		rsp.buffer[1] = (ios_pin(PORT_D2_PIN) << 1) |
+		                (ios_pin(PORT_D1_PIN) << 0);
+		if (cmsis_mode == 1)
+			rsp.buffer[1] |= (ios_pin(PORT_D3_PIN) << 7);
+		else if (cmsis_mode == 2)
+			rsp.buffer[1] |= (ios_pin(PORT_D3_PIN) << 3);
+
+		rsp.len = 2;
+		result = 0;
+	}
+	/* DAP_SWJ_Clock */
+	else if (req.buffer[0] == 0x11)
+	{
+		cmsis_clock = (req.buffer[1] << 8) | req.buffer[2];
+		log_puts("CMSIS: Set clock ");
+		log_puthex(cmsis_clock, 16);
+		log_puts("\r\n");
+		rsp.buffer[1] = 0x00; // OK
 		rsp.len = 2;
 		result = 0;
 	}

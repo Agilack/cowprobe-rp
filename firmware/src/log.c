@@ -19,6 +19,9 @@
 #include "ios.h"
 #include "log.h"
 
+#define LOG_TX_PIN  EXT_08_PIN
+#define LOG_RX_PIN  EXT_07_PIN
+
 /**
  * @brief Initialize the "log" module
  *

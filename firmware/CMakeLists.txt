@@ -16,18 +16,19 @@ pico_sdk_init()
 
 # Tell CMake where to find the executable source file
 add_executable(${PROJECT_NAME} 
-	main.c
-	serial.c
-	usb.c
-	log.c
-	cmsis.c
+	src/main.c
+	src/ios.c
+	src/serial.c
+	src/usb.c
+	src/log.c
+	src/cmsis.c
 )
 
 # Create map/bin/hex/uf2 files
 pico_add_extra_outputs(${PROJECT_NAME})
 
 target_include_directories(${PROJECT_NAME} PUBLIC
-	./
+	./src/
 	pico-sdk/lib/tinyusb/src
 )
 

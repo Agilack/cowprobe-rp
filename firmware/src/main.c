@@ -14,6 +14,7 @@
  * This program is distributed WITHOUT ANY WARRANTY.
  */
 #include "pico/stdlib.h"
+#include "ios.h"
 #include "log.h"
 #include "serial.h"
 #include "usb.h"
@@ -28,6 +29,7 @@
 int main()
 {
 	/* Initialize all modules */
+	ios_init();
 	log_init();
 	serial_init();
 	usb_init();
