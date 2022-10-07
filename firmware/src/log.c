@@ -44,6 +44,38 @@ void log_init(void)
 }
 
 /**
+ * @brief Send the decimal representation of an integer
+ *
+ * @param v Value (32 bits) to show as decimal
+ */
+void log_putdec(uint32_t v)
+{
+	unsigned int decade = 1000000000;
+	char str[16], *d;
+	int i, count;
+
+	d = str;
+	count = 0;
+
+	for (i = 0; i < 9; i++)
+	{
+		if ((v > (int)(decade - 1)) || count)
+		{
+			*d =  (v / decade) + '0';
+			v -= ((v / decade) * decade);
+			d++;
+			count++;
+		}
+		decade = (decade / 10);
+	}
+	*d = v + '0';
+	count ++;
+
+	d[1] = 0;
+	log_puts(str);
+}
+
+/**
  * @brief Send the hexadecimal representation of an integer
  *
  * @param c   Binary word (32 bits) to show as hex

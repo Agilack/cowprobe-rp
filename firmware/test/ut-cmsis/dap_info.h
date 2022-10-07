@@ -1,6 +1,6 @@
 /**
- * @file  log.h
- * @brief Headers and definitions for log and debug module
+ * @file  dap_info.h
+ * @brief Headers for the DAP_Info test functions
  *
  * @author Saint-Genest Gwenael <gwen@cowlab.fr>
  * @copyright Cowlab (c) 2022
@@ -13,12 +13,16 @@
  * for more details.
  * This program is distributed WITHOUT ANY WARRANTY.
  */
-#ifndef LOG_H
-#define LOG_H
+#ifndef DAP_INFO_H
+#define DAP_INFO_H
+#include "test.h"
 
-void log_init  (void);
-void log_putdec(const uint32_t v);
-void log_puthex(const uint32_t c, const uint8_t len);
-void log_puts  (char *s);
+int tst_info_capabilities(cmsis_env *env);
+int tst_info_packet_count(cmsis_env *env);
+int tst_info_packet_size(cmsis_env *env);
+int tst_info_product_name(cmsis_env *env);
+int tst_info_protocol_version(cmsis_env *env);
+int tst_info_serial(cmsis_env *env);
+int tst_info_vendor(cmsis_env *env);
 
 #endif

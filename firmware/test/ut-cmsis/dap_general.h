@@ -1,6 +1,6 @@
 /**
- * @file  log.h
- * @brief Headers and definitions for log and debug module
+ * @file  dap_general.h
+ * @brief Headers for the test functions of general DAP commands
  *
  * @author Saint-Genest Gwenael <gwen@cowlab.fr>
  * @copyright Cowlab (c) 2022
@@ -13,12 +13,15 @@
  * for more details.
  * This program is distributed WITHOUT ANY WARRANTY.
  */
-#ifndef LOG_H
-#define LOG_H
+#ifndef DAP_GENERAL_H
+#define DAP_GENERAL_H
+#include "test.h"
 
-void log_init  (void);
-void log_putdec(const uint32_t v);
-void log_puthex(const uint32_t c, const uint8_t len);
-void log_puts  (char *s);
+int tst_connect(cmsis_env *env);
+int tst_delay(cmsis_env *env);
+int tst_disconnect(cmsis_env *env);
+int tst_host_status(cmsis_env *env);
+int tst_reset_target(cmsis_env *env);
+int tst_write_abort(cmsis_env *env);
 
 #endif

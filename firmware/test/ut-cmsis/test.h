@@ -1,6 +1,6 @@
 /**
- * @file  log.h
- * @brief Headers and definitions for log and debug module
+ * @file  test.h
+ * @brief Global headers and definitions used by all tests
  *
  * @author Saint-Genest Gwenael <gwen@cowlab.fr>
  * @copyright Cowlab (c) 2022
@@ -13,12 +13,23 @@
  * for more details.
  * This program is distributed WITHOUT ANY WARRANTY.
  */
-#ifndef LOG_H
-#define LOG_H
+#ifndef TEST_H
+#define TEST_H
+#include <libusb-1.0/libusb.h>
 
-void log_init  (void);
-void log_putdec(const uint32_t v);
-void log_puthex(const uint32_t c, const uint8_t len);
-void log_puts  (char *s);
+typedef struct cmsis_env_s
+{
+	libusb_device_handle *dev;
+	unsigned char tx[1024];
+	int tx_len;
+	unsigned char rx[1024];
+	int rx_len;
+} cmsis_env;
+
+void color(int x);
+int cmsis_txrx(cmsis_env *env);
+
+int err_header (cmsis_env *env, int n);
+int err_request(void);
 
 #endif
