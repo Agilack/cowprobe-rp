@@ -18,6 +18,7 @@
 #include <libusb-1.0/libusb.h>
 #include "dap_general.h"
 #include "dap_info.h"
+#include "swd.h"
 #include "test.h"
 
 int find_probe(libusb_device_handle **probe);
@@ -32,11 +33,30 @@ int find_probe(libusb_device_handle **probe);
 int main(int argc, char **argv)
 {
 	cmsis_env env;
+	int test = 0;
 	int ret = 0;
 	int err = 0;
 
 	(void)argc;
 	(void)argv;
+	if (argc > 1)
+	{
+		/* Execute all tests (default) */
+		if (strcmp(argv[1], "all") == 0)
+			test = 0;
+		/* Execute only dap tests*/
+		else if (strcmp(argv[1], "dap") == 0)
+			test = 1;
+		/* Execute only SWD tests */
+		else if (strcmp(argv[1], "swd") == 0)
+			test = 2;
+		else
+		{
+			printf("Unknown argument %s\n\n", argv[1]);
+			printf("Usage: %s [all|dap|swd]\n", argv[0]);
+			return(0);
+		}
+	}
 	memset((void *)&env, 0, sizeof(cmsis_env));
 
 	if (libusb_init(0) < 0)
@@ -53,26 +73,37 @@ int main(int argc, char **argv)
 		goto finish;
 	}
 
-	/* Test DAP_Info commands */
-	err += tst_info_vendor(&env) ? 1 : 0;
-	err += tst_info_product_name(&env) ? 1 : 0;
-	err += tst_info_serial(&env) ? 1 : 0;
-	err += tst_info_protocol_version(&env) ? 1 : 0;
-	// TODO TargetDeviceVendor
-	// TODO TargetDeviceName
-	// TODO TargetBoardVendor
-	// TODO TargetBoardName
-	// TODO Product Firmware Version
-	err += tst_info_capabilities(&env) ? 1 : 0;
-	err += tst_info_packet_count(&env) ? 1 : 0;
-	err += tst_info_packet_size(&env) ? 1 : 0;
-	/* Test other general DAP commands */
-	err += tst_connect(&env)     ? 1 : 0;
-	err += tst_disconnect(&env)  ? 1 : 0;
-	err += tst_host_status(&env) ? 1 : 0;
-	err += tst_write_abort(&env) ? 1 : 0;
-	err += tst_delay(&env)       ? 1 : 0;
-	err += tst_reset_target(&env)? 1 : 0;
+	if ((test == 0) || (test == 1))
+	{
+		/* Test DAP_Info commands */
+		err += tst_info_vendor(&env) ? 1 : 0;
+		err += tst_info_product_name(&env) ? 1 : 0;
+		err += tst_info_serial(&env) ? 1 : 0;
+		err += tst_info_protocol_version(&env) ? 1 : 0;
+		// TODO TargetDeviceVendor
+		// TODO TargetDeviceName
+		// TODO TargetBoardVendor
+		// TODO TargetBoardName
+		// TODO Product Firmware Version
+		err += tst_info_capabilities(&env) ? 1 : 0;
+		err += tst_info_packet_count(&env) ? 1 : 0;
+		err += tst_info_packet_size(&env) ? 1 : 0;
+		/* Test other general DAP commands */
+		err += tst_connect(&env)     ? 1 : 0;
+		err += tst_disconnect(&env)  ? 1 : 0;
+		err += tst_host_status(&env) ? 1 : 0;
+		err += tst_write_abort(&env) ? 1 : 0;
+		err += tst_delay(&env)       ? 1 : 0;
+		err += tst_reset_target(&env)? 1 : 0;
+	}
+	/* Test SWD */
+	if ((test == 0) || (test == 2))
+	{
+		err += swd_connect(&env) ? 1 : 0;
+		//err += swd_reset(&env) ? 1 : 0;
+		err += swd_j2s(&env)   ? 1 : 0;
+		err += swd_dpidr(&env) ? 1 : 0;
+	}
 
 	printf("\n Test complete ");
 	if (err == 0)

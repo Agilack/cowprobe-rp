@@ -21,7 +21,8 @@ all:
 	cc $(CFLAGS) -c main.c        -o main.o
 	cc $(CFLAGS) -c dap_general.c -o dap_general.o
 	cc $(CFLAGS) -c dap_info.c    -o dap_info.o
-	cc -o $(APP) $(LDFLAGS) main.o dap_general.o dap_info.o
+	cc $(CFLAGS) -c swd.c         -o swd.o
+	cc -o $(APP) $(LDFLAGS) main.o dap_general.o dap_info.o swd.o
 
 clean:
 	rm -f $(APP) *.o *~

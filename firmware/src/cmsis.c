@@ -17,6 +17,7 @@
 #include "ios.h"
 #include "log.h"
 #include "cmsis.h"
+#include "swd.h"
 #include "usb.h"
 
 #ifdef USE_CMSIS
@@ -61,6 +62,7 @@ static inline int dap_info_cap(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_reset_target(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swd_configure(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp);
+static inline int dap_transfer(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_transfer_configure(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_write_abort(cmsis_pkt *req, cmsis_pkt *rsp);
 
@@ -134,13 +136,13 @@ void dap_recv(uint8_t *rx, uint16_t len)
 			if (select & (1 << 0))
 			{
 				sig = (output & (1 << 0)) ? 1 : 0;
-				ios_pin_set(PORT_D1_PIN, sig);
+				ios_pin_set(PORT_D2_PIN, sig);
 			}
 			/* Bit1: TMS/SWD-DAT */
 			if (select & (1 << 1))
 			{
 				sig = (output & (1 << 1)) ? 1 : 0;
-				ios_pin_set(PORT_D2_PIN, sig);
+				ios_pin_set(PORT_D1_PIN, sig);
 			}
 			/* Bit3: TDO */
 			if (select & (1 << 3))
@@ -171,8 +173,8 @@ void dap_recv(uint8_t *rx, uint16_t len)
 			(void)wait;
 
 			/* Insert current IOs values into response */
-			rsp.buffer[1] = (ios_pin(PORT_D2_PIN) << 1) |
-			                (ios_pin(PORT_D1_PIN) << 0);
+			rsp.buffer[1] = (ios_pin(PORT_D1_PIN) << 1) |
+			                (ios_pin(PORT_D2_PIN) << 0);
 			if (cmsis_mode == 1)
 				rsp.buffer[1] |= (ios_pin(PORT_D3_PIN) << 7);
 			else if (cmsis_mode == 2)
@@ -211,6 +213,10 @@ void dap_recv(uint8_t *rx, uint16_t len)
 		/* DAP_TransferConfigure */
 		case 0x04:
 			result = dap_transfer_configure(&req, &rsp);
+			break;
+		/* DAP_Transfer */
+		case 0x05:
+			result = dap_transfer(&req, &rsp);
 			break;
 	}
 
@@ -271,6 +277,7 @@ static inline int dap_connect(cmsis_pkt *req, cmsis_pkt *rsp)
 	{
 		cmsis_mode = 1;
 		ios_mode(PORT_MODE_SWD);
+		swd_config.retry_count = dap_retry_wait;
 		/* Response: cmsis mode is now SWD */
 		rsp->buffer[1] = 0x01;
 	}
@@ -580,9 +587,8 @@ static inline int dap_swd_configure(cmsis_pkt *req, cmsis_pkt *rsp)
 static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 {
 	unsigned char *p, v;
-	int bit_count, bit_sent;
+	int bit_count, bit_sent, bit_rem;
 	int len, wait;
-	int i;
 
 #ifdef DEBUG_CMSIS
 	/* Sanity check */
@@ -604,33 +610,73 @@ static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 	{
 		/* Extract next byte */
 		v = *p;
-		len = (bit_count > 8) ? 8 : bit_count;
-		for (i = 0; i < len; i++)
-		{
-			/* Set next bit to SWD-DAT / JTAG-TMS */
-			if (v & 1) ios_pin_set(PORT_D2_PIN, 1);
-			else       ios_pin_set(PORT_D2_PIN, 0);
-			/* Falling edge to SWD-CLK / TCK */
-			ios_pin_set(PORT_D1_PIN, 0);
-			/* Wait a bit TODO: improve delay */
-			for (wait = 0; wait < 20; wait++)
-				asm volatile("nop");
-			/* Rising edge to SWD-CLK */
-			ios_pin_set(PORT_D1_PIN, 1);
-			/* Wait a bit TODO: improve delay */
-			for (wait = 0; wait < 20; wait++)
-				asm volatile("nop");
-			/* Shift byte to select next bit */
-			v = (v >> 1);
-			/* Update counter of processed bits */
-			bit_sent++;
-		}
+		bit_rem = (bit_count - bit_sent);
+		len = (bit_rem > 8) ? 8 : bit_rem;
+		swd_wr(v, len);
+		/* Update counter of processed bits */
+		bit_sent += len;
 		p++;
 	}
 
 	/* Sequence complete ! prepare response */
 	rsp->buffer[1] = 0x00; // OK
 	rsp->len = 2;
+
+	return(0);
+}
+
+static inline int dap_transfer(cmsis_pkt *req, cmsis_pkt *rsp)
+{
+	int count, pos, pos_resp;
+	int request, ack;
+	unsigned long data;
+	int i;
+
+#ifdef DEBUG_CMSIS
+	/* Sanity check */
+	if ((req == 0) || (rsp == 0))
+		return(-1);
+#endif
+
+	count = req->buffer[2];
+
+#ifdef DEBUG_CMSIS
+	log_puts("CMSIS: DAP Transfer with ");
+	log_putdec(count);
+	log_puts(" requests\r\n");
+#endif
+	pos_resp = 3;
+	for (i = 0, pos = 2; i < count; i++)
+	{
+		request = req->buffer[++pos];
+		log_puts("Request ");
+		log_puthex(request, 8);
+		log_puts("\r\n");
+		/* If RnW bit is set, read request */
+		if (request & (1 << 1))
+		{
+			log_puts("CMSIS: SWD Read\r\n");
+			ack = swd_transfer(request, &data);
+			if (ack == 1)
+			{
+				rsp->buffer[pos_resp + 0] = ((data >>  0) & 0xFF);
+				rsp->buffer[pos_resp + 1] = ((data >>  8) & 0xFF);
+				rsp->buffer[pos_resp + 2] = ((data >> 16) & 0xFF);
+				rsp->buffer[pos_resp + 3] = ((data >> 24) & 0xFF);
+				pos_resp += 4;
+			}
+		}
+		else
+		{
+			log_puts("CMSIS: DAP_Transfer ... unknown request\r\n");
+		}
+		if (ack != 1)
+			break;
+	}
+	rsp->buffer[1] = i;
+	// Trasfer response
+	rsp->buffer[2] = ack;
+	rsp->len = pos_resp;
 
 	return(0);
 }
@@ -656,6 +702,8 @@ static inline int dap_transfer_configure(cmsis_pkt *req, cmsis_pkt *rsp)
 	dap_idle_cycles = req->buffer[1];
 	dap_retry_wait  = (req->buffer[3] << 8) | req->buffer[2];
 	dap_retry_match = (req->buffer[5] << 8) | req->buffer[4];
+
+	swd_config.retry_count = dap_retry_wait;
 
 #ifdef DEBUG_CMSIS
 	log_puts("DAP: Configure transfer:");
