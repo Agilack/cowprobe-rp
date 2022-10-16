@@ -21,7 +21,8 @@
 #include "usb.h"
 
 #ifdef USE_CMSIS
-#define DEBUG_CMSIS
+#undef  DEBUG_CMSIS
+#undef  DEBUG_CMSIS_USB
 
 #define RX_SIZE 256
 
@@ -33,6 +34,8 @@ static uint8_t ep_out_n;
 static uint8_t rx_buffer[RX_SIZE];
 static uint8_t tx_buffer[256];
 
+static void dap_init(void);
+
 /**
  * @brief Initialize the "cmsis" module
  *
@@ -42,11 +45,10 @@ static uint8_t tx_buffer[256];
  */
 void cmsis_init(void)
 {
-	log_puts("cmsis_init()\r\n");
+	log_puts("CMSIS: Initialization\r\n");
 	cmsis_mode  = 0; // 0:Unused 1:SWD 2:JTAG
 	cmsis_clock = 0;
-	ep_in_n  = 0;
-	ep_out_n = 0;
+	dap_init();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -61,6 +63,8 @@ static inline int dap_info(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_info_cap(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_reset_target(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swd_configure(cmsis_pkt *req, cmsis_pkt *rsp);
+static inline int dap_swj_clock(cmsis_pkt *req, cmsis_pkt *rsp);
+static inline int dap_swj_pins(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_transfer(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_transfer_configure(cmsis_pkt *req, cmsis_pkt *rsp);
@@ -74,6 +78,28 @@ static int  dap_ta_period;
 static char str_serial[]  = "12345678";
 static char str_version[] = "1.0";
 
+/**
+ * @brief Initialize DAP submodule
+ *
+ * This function is used to initialize the DAP component of the CMSIS
+ * module (mainly internal variables). For the DAP to work properly, this
+ * function must be called before any use of DAP.
+ */
+static void dap_init(void)
+{
+	dap_data_phase  = 0;
+	dap_idle_cycles = 0;
+	dap_retry_wait  = 16;
+	dap_retry_match = 0;
+	dap_ta_period   = 0;
+}
+
+/**
+ * @brief Process an incoming CMSIS-DAP packet
+ *
+ * @param rx  Point to a buffer with received packet
+ * @param len Number of bytes into received packet
+ */
 void dap_recv(uint8_t *rx, uint16_t len)
 {
 	cmsis_pkt req, rsp;
@@ -124,91 +150,56 @@ void dap_recv(uint8_t *rx, uint16_t len)
 
 		/* DAP_SWJ_Pins */
 		case 0x10:
-		{
-			uint8_t output = req.buffer[1];
-			uint8_t select = req.buffer[2];
-			uint8_t wait   = req.buffer[3];
-			uint8_t sig;
-
-			log_puts("CMSIS: Set DAP_SWJ pins\r\n");
-
-			/* Bit0: TCK/SWD-CLK */
-			if (select & (1 << 0))
-			{
-				sig = (output & (1 << 0)) ? 1 : 0;
-				ios_pin_set(PORT_D2_PIN, sig);
-			}
-			/* Bit1: TMS/SWD-DAT */
-			if (select & (1 << 1))
-			{
-				sig = (output & (1 << 1)) ? 1 : 0;
-				ios_pin_set(PORT_D1_PIN, sig);
-			}
-			/* Bit3: TDO */
-			if (select & (1 << 3))
-			{
-				/* TDO signal available only in JTAG mode */
-				if (cmsis_mode == 2)
-				{
-					sig = (output & (1 << 3)) ? 1 : 0;
-					ios_pin_set(PORT_D3_PIN, sig);
-				}
-			}
-			/* Bit5: nTRST */
-			if (select & (1 << 5))
-			{
-				/* nTRST is not available */
-			}
-			/* Bit7: nReset */
-			if (select & (1 << 7))
-			{
-				/* Reset signal available only in SWD mode */
-				if (cmsis_mode == 1)
-				{
-					sig = (output & (1 << 7)) ? 1 : 0;
-					ios_pin_set(PORT_D3_PIN, sig);
-				}
-			}
-			/* TODO: Handle wait argument */
-			(void)wait;
-
-			/* Insert current IOs values into response */
-			rsp.buffer[1] = (ios_pin(PORT_D1_PIN) << 1) |
-			                (ios_pin(PORT_D2_PIN) << 0);
-			if (cmsis_mode == 1)
-				rsp.buffer[1] |= (ios_pin(PORT_D3_PIN) << 7);
-			else if (cmsis_mode == 2)
-				rsp.buffer[1] |= (ios_pin(PORT_D3_PIN) << 3);
-
-			rsp.len = 2;
-			result = 0;
+			result = dap_swj_pins(&req, &rsp);
 			break;
-		}
-
 		/* DAP_SWJ_Clock */
 		case 0x11:
-		{
-			cmsis_clock = (req.buffer[1] << 8) | req.buffer[2];
-			log_puts("CMSIS: Set clock ");
-			log_puthex(cmsis_clock, 16);
-			log_puts("\r\n");
-			rsp.buffer[1] = 0x00; // OK
-			rsp.len = 2;
-			result = 0;
+			result = dap_swj_clock(&req, &rsp);
 			break;
-		}
-
 		/* DAP_SWJ_Sequence */
 		case 0x12:
 			result = dap_swj_sequence(&req, &rsp);
 			break;
 
-		/* == Unsorted Commands (SWD, JTAG, Transfer ...) == */
+		/* == SWD Commands == */
 
 		/* DAP_SWD_Configure */
 		case 0x13:
 			result = dap_swd_configure(&req, &rsp);
 			break;
+		/* DAP_SWD_Sequence */
+		case 0x1D:
+			/* This command is only available since CMSIS 1.2 */
+			rsp.buffer[1] = 0xFF;
+			rsp.len = 2;
+			result = 0;
+			break;
+
+		/* == SWO Commands == */
+
+		/* DAP_SWO_Transport */
+		case 0x17:
+		/* DAP_SWO_Mode */
+		case 0x18:
+		/* DAP_SWO_Baudrate */
+		case 0x19:
+		/* DAP_SWO_Control */
+		case 0x1A:
+		/* DAP_SWO_Status */
+		case 0x1B:
+		/* DAP_ExtendedStatus */
+		case 0x1E:
+		/* DAP_SWO_Data */
+		case 0x1C:
+			log_puts("CMSIS: SWO command ");
+			log_puthex(req.buffer[0], 8);
+			log_puts(" not supported yet.\r\n");
+			rsp.buffer[1] = 0xFF;
+			rsp.len = 2;
+			result = 0;
+			break;
+
+		/* == Unsorted Commands (SWD, JTAG, Transfer ...) == */
 
 		/* DAP_TransferConfigure */
 		case 0x04:
@@ -217,6 +208,12 @@ void dap_recv(uint8_t *rx, uint16_t len)
 		/* DAP_Transfer */
 		case 0x05:
 			result = dap_transfer(&req, &rsp);
+			break;
+		/* DAP_TransferBlock */
+		case 0x06:
+		/* DAP_TransferAbort */
+		case 0x07:
+			result = -1;
 			break;
 	}
 
@@ -265,12 +262,6 @@ static inline int dap_connect(cmsis_pkt *req, cmsis_pkt *rsp)
 	log_puthex(req->buffer[1], 8);
 	log_puts("\r\n");
 #endif
-
-	dap_data_phase  = 0;
-	dap_idle_cycles = 0;
-	dap_retry_wait  = 1;
-	dap_retry_match = 0;
-	dap_ta_period   = 0;
 
 	/* If request port is SWD (or Default) */
 	if ((req->buffer[1] == 1) || (req->buffer[1] == 0))
@@ -401,12 +392,10 @@ static inline int dap_info(cmsis_pkt *req, cmsis_pkt *rsp)
 			goto ret_str;
 		/* Serial Number (string) */
 		case 0x03:
-			log_puts("CMSIS: Get serial number\r\n");
 			str = str_serial;
 			goto ret_str;
 		/* CMSIS-DAP Protocol Version */
 		case 0x04:
-			log_puts("CMSIS: Get DAP protocol version\r\n");
 			str = str_version;
 			goto ret_str;
 		/* Target Device Vendor */
@@ -444,14 +433,12 @@ static inline int dap_info(cmsis_pkt *req, cmsis_pkt *rsp)
 			goto ret_word;
 		/* Packet Count */
 		case 0xFE:
-			log_puts("CMSIS: Get packet count (1)\r\n");
 			rsp->buffer[1] = 1; // Response size
 			rsp->buffer[2] = 1; // Packet count = 1
 			rsp->len = 3;
 			break;
 		/* Packet Size */
 		case 0xFF:
-			log_puts("CMSIS: Get packet size (64)\r\n");
 			rsp->buffer[1] = 2;    // Response size
 			rsp->buffer[2] = 0x40; // Packet size = 64
 			rsp->buffer[3] = 0x00;
@@ -574,6 +561,117 @@ static inline int dap_swd_configure(cmsis_pkt *req, cmsis_pkt *rsp)
 }
 
 /**
+ * @brief Handle DAP_SWJ_Clock command
+ *
+ * This command is used to set the clock frequency of the bus (common to SWD
+ * and JTAG modes).
+ *
+ * @param rep Pointer to the request packet
+ * @param rsp Pointer to a packet where response can be stored
+ * @return integer On success zero is returned, -1 for error
+ */
+static inline int dap_swj_clock(cmsis_pkt *req, cmsis_pkt *rsp)
+{
+#ifdef DEBUG_CMSIS
+	/* Sanity check */
+	if ((req == 0) || (rsp == 0))
+		return(-1);
+#endif
+
+	cmsis_clock = (req->buffer[1] << 8) | req->buffer[2];
+
+#ifdef DEBUG_CMSIS
+	log_puts("CMSIS: Set clock ");
+	log_puthex(cmsis_clock, 16);
+	log_puts("\r\n");
+#endif
+
+	rsp->buffer[1] = 0x00; // OK
+	rsp->len = 2;
+	return(0);
+}
+
+/**
+ * @brief Handle DAP_SWJ_Pins command
+ *
+ * This command is used to monitor and control the IOs pins including
+ * reset lines.
+ *
+ * @param rep Pointer to the request packet
+ * @param rsp Pointer to a packet where response can be stored
+ * @return integer On success zero is returned, -1 for error
+ */
+static inline int dap_swj_pins(cmsis_pkt *req, cmsis_pkt *rsp)
+{
+	uint8_t output;
+	uint8_t select;
+	uint8_t wait;
+	uint8_t sig;
+
+#ifdef DEBUG_CMSIS
+	/* Sanity check */
+	if ((req == 0) || (rsp == 0))
+		return(-1);
+
+	log_puts("CMSIS: Set DAP_SWJ pins\r\n");
+#endif
+	output = req->buffer[1];
+	select = req->buffer[2];
+	wait   = req->buffer[3];
+
+	/* Bit0: TCK/SWD-CLK */
+	if (select & (1 << 0))
+	{
+		sig = (output & (1 << 0)) ? 1 : 0;
+		ios_pin_set(PORT_D2_PIN, sig);
+	}
+	/* Bit1: TMS/SWD-DAT */
+	if (select & (1 << 1))
+	{
+		sig = (output & (1 << 1)) ? 1 : 0;
+		ios_pin_set(PORT_D1_PIN, sig);
+	}
+	/* Bit3: TDO */
+	if (select & (1 << 3))
+	{
+		/* TDO signal available only in JTAG mode */
+		if (cmsis_mode == 2)
+		{
+			sig = (output & (1 << 3)) ? 1 : 0;
+			ios_pin_set(PORT_D3_PIN, sig);
+		}
+	}
+	/* Bit5: nTRST */
+	if (select & (1 << 5))
+	{
+		/* nTRST is not available */
+	}
+	/* Bit7: nReset */
+	if (select & (1 << 7))
+	{
+		/* Reset signal available only in SWD mode */
+		if (cmsis_mode == 1)
+		{
+			sig = (output & (1 << 7)) ? 1 : 0;
+			ios_pin_set(PORT_D3_PIN, sig);
+		}
+	}
+	/* TODO: Handle wait argument */
+	(void)wait;
+
+	/* Insert current IOs values into response */
+	rsp->buffer[1] = (ios_pin(PORT_D1_PIN) << 1) |
+	                 (ios_pin(PORT_D2_PIN) << 0);
+	if (cmsis_mode == 1)
+		rsp->buffer[1] |= (ios_pin(PORT_D3_PIN) << 7);
+	else if (cmsis_mode == 2)
+		rsp->buffer[1] |= (ios_pin(PORT_D3_PIN) << 3);
+
+	rsp->len = 2;
+	return(0);
+}
+
+/**
  * @brief Handle DAP_SWJ_Sequence command
  *
  * This command is used to send a sequence of bits without taking care about
@@ -625,11 +723,23 @@ static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 	return(0);
 }
 
+/**
+ * @brief Handle DAP_Transfer command
+ *
+ * This command is used to read or write data to CoreSight registers. Each
+ * access is for a 32bits value.
+ *
+ * @param rep Pointer to the request packet
+ * @param rsp Pointer to a packet where response can be stored
+ * @return integer On success zero is returned, -1 for error
+ */
 static inline int dap_transfer(cmsis_pkt *req, cmsis_pkt *rsp)
 {
 	int count, pos, pos_resp;
 	int request, ack;
 	unsigned long data;
+	int rd_posted = 0;
+	int wr_rd = 0;
 	int i;
 
 #ifdef DEBUG_CMSIS
@@ -640,7 +750,7 @@ static inline int dap_transfer(cmsis_pkt *req, cmsis_pkt *rsp)
 
 	count = req->buffer[2];
 
-#ifdef DEBUG_CMSIS
+#ifdef DEBUG_CMSIS_TR
 	log_puts("CMSIS: DAP Transfer with ");
 	log_putdec(count);
 	log_puts(" requests\r\n");
@@ -648,14 +758,43 @@ static inline int dap_transfer(cmsis_pkt *req, cmsis_pkt *rsp)
 	pos_resp = 3;
 	for (i = 0, pos = 2; i < count; i++)
 	{
+		wr_rd = 0;
+
 		request = req->buffer[++pos];
-		log_puts("Request ");
-		log_puthex(request, 8);
-		log_puts("\r\n");
-		/* If RnW bit is set, read request */
-		if (request & (1 << 1))
+
+		if (rd_posted)
 		{
-			log_puts("CMSIS: SWD Read\r\n");
+			/* In case of another read on AP, after a posted read */
+			if ( (request & (1 << 1)) && (request & (1 << 0)) )
+				ack = swd_transfer(request, &data);
+			else
+			{
+				ack = swd_transfer(0x0C | (1 << 1), &data);
+				rd_posted = 0;
+			}
+			if (ack != 1)
+				break;
+
+			rsp->buffer[pos_resp + 0] = ((data >>  0) & 0xFF);
+			rsp->buffer[pos_resp + 1] = ((data >>  8) & 0xFF);
+			rsp->buffer[pos_resp + 2] = ((data >> 16) & 0xFF);
+			rsp->buffer[pos_resp + 3] = ((data >> 24) & 0xFF);
+			pos_resp += 4;
+
+			if (rd_posted)
+				continue;
+		}
+		/* In case of a read on AP, insert an extra read cycle */
+		if ( (request & (1 << 1)) && (request & (1 << 0)) )
+		{
+			ack = swd_transfer(request, &data);
+			if (ack != 1)
+				break;
+			rd_posted = 1;
+		}
+		/* If RnW bit is set, read request */
+		else if (request & (1 << 1))
+		{
 			ack = swd_transfer(request, &data);
 			if (ack == 1)
 			{
@@ -666,16 +805,46 @@ static inline int dap_transfer(cmsis_pkt *req, cmsis_pkt *rsp)
 				pos_resp += 4;
 			}
 		}
+		/* RnW is clear, Write request */
 		else
 		{
-			log_puts("CMSIS: DAP_Transfer ... unknown request\r\n");
+			/* Extract data to write from request */
+			data  = (req->buffer[pos+4] << 24);
+			data |= (req->buffer[pos+3] << 16);
+			data |= (req->buffer[pos+2] <<  8);
+			data |= (req->buffer[pos+1] <<  0);
+			pos += 4;
+
+			ack = swd_transfer(request, &data);
+			if (ack == 1)
+				wr_rd = 1;
 		}
 		if (ack != 1)
 			break;
 	}
-	rsp->buffer[1] = i;
-	// Trasfer response
-	rsp->buffer[2] = ack;
+
+	if (ack == 1)
+	{
+		if (rd_posted)
+		{
+			ack = swd_transfer(0x0C | (1 << 1), &data);
+			if (ack == 1)
+			{
+				rsp->buffer[pos_resp + 0] = ((data >>  0) & 0xFF);
+				rsp->buffer[pos_resp + 1] = ((data >>  8) & 0xFF);
+				rsp->buffer[pos_resp + 2] = ((data >> 16) & 0xFF);
+				rsp->buffer[pos_resp + 3] = ((data >> 24) & 0xFF);
+
+				pos_resp += 4;
+			}
+		}
+		else if (wr_rd)
+			ack = swd_transfer(0x0C | (1 << 1), 0);
+	}
+
+	/* Make response header */
+	rsp->buffer[1] = i;   /* Number of transfer */
+	rsp->buffer[2] = ack; /* Status of last transfer */
 	rsp->len = pos_resp;
 
 	return(0);
@@ -759,7 +928,11 @@ static inline int dap_write_abort(cmsis_pkt *req, cmsis_pkt *rsp)
  */
 void cmsis_usb_init(void)
 {
+#ifdef DEBUG_CMSIS_USB
 	log_puts("cmsis_usb_init()\r\n");
+#endif
+	ep_in_n  = 0;
+	ep_out_n = 0;
 }
 
 /**
@@ -778,7 +951,9 @@ uint16_t cmsis_usb_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc, u
 
 	(void)rhport;
 
+#ifdef DEBUG_CMSIS_USB
 	log_puts("cmsis_usb_open()\r\n");
+#endif
 
 	if (itf_desc->bInterfaceNumber != TUD_ITF_CMSIS)
 		return(0);
@@ -824,7 +999,9 @@ uint16_t cmsis_usb_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc, u
 	else
 		goto err;
 
+#ifdef DEBUG_CMSIS_USB
 	log_puts("CMSIS: Found\r\n");
+#endif
 
 	if (drv_len > max_len)
 	{
@@ -847,7 +1024,9 @@ err:
  */
 void cmsis_usb_reset(uint8_t rhport)
 {
+#ifdef DEBUG_CMSIS_USB
 	log_puts("cmsis_usb_reset()\r\n");
+#endif
 }
 
 /**
@@ -858,7 +1037,9 @@ void cmsis_usb_reset(uint8_t rhport)
  */
 bool cmsis_usb_ctl(uint8_t rhport, uint8_t stage, tusb_control_request_t const* req)
 {
+#ifdef DEBUG_CMSIS_USB
 	log_puts("cmsis_usb_ctl()\r\n");
+#endif
 }
 
 /**

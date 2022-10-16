@@ -2,7 +2,9 @@
  * @file  swd.h
  * @brief Headers and definitions for SWD interface
  *
- * @author Saint-Genest Gwenael <gwen@cowlab.fr>
+ * @authors Saint-Genest Gwenael <gwen@cowlab.fr>
+ *          Blot Alexandre <alexandre.blot@agilack.fr>
+ *          Jousseaume Florent <florent.jousseaume@agilack.fr>
  * @copyright Cowlab (c) 2022
  *
  * @page License
@@ -25,6 +27,8 @@ typedef struct swd_param_s
 extern swd_param swd_config;
 
 int  swd_transfer(u8 req, u32 *value);
+/* Low level SWD functions */
+void swd_idle(void);
 u32  swd_rd(uint len);
 void swd_turna(int dir);
 void swd_wr(u32 value, uint len);

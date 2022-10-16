@@ -2,7 +2,9 @@
  * @file  swd.c
  * @brief Implement SWD protocol
  *
- * @author Saint-Genest Gwenael <gwen@cowlab.fr>
+ * @authors Saint-Genest Gwenael <gwen@cowlab.fr>
+ *          Blot Alexandre <alexandre.blot@agilack.fr>
+ *          Jousseaume Florent <florent.jousseaume@agilack.fr>
  * @copyright Cowlab (c) 2022
  *
  * @page License
@@ -19,7 +21,8 @@
 #include "swd.h"
 
 #define DEBUG_SWD
-#define WAIT_DELAY 80
+#define BIT_DELAY  80
+#define WAIT_DELAY 1000
 
 #define PIN_SWDIO PORT_D1_PIN
 #define PIN_SWCLK PORT_D2_PIN
@@ -39,21 +42,15 @@ int swd_transfer(uint8_t req, uint32_t *value)
 {
 	uint32_t data;
 	int ack = 0;
-	int i;
+	int i, wt;
 
 #ifdef DEBUG_SWD
-	// Sanity check
+	/* Sanity check */
 	if (swd_config.retry_count == 0)
 	{
 		log_puts("SWD: transfer error : retry count is nul\r\n");
 		return(ack);
 	}
-	if (value == 0)
-		log_puts("SWD: transfer warning, no value specified\r\n");
-
-	log_puts("swd_transfer ");
-	log_puthex(req, 8);
-	log_puts("\r\n");
 #endif
 
 	for (i = 0; i < swd_config.retry_count; i++)
@@ -65,30 +62,74 @@ int swd_transfer(uint8_t req, uint32_t *value)
 		swd_turna(0);
 		ack = swd_rd(3);
 
-		// If acknowledge is OK
-		if (ack == 1)
+		/* If acknowledge is WAIT */
+		if (ack == 2)
 		{
-			data = swd_rd(32);
-			// Read parity bit
-			if (swd_rd(1) != _parity(data))
-				log_puts("DAP: Parity error\r\n");
-			else if (value)
-				*value = data;
-
-			// Trn cycle to revert initial state
+			// TODO: Handle sticky overrun
+#ifdef DAP_DEBUG
+			log_puts("SWD: Transfer WAIT\r\n");
+#endif
+			/* Trn cycle to revert initial state */
 			swd_turna(1);
-			// Request finished, no retry needed
+			/* Wait some time before try again */
+			for (wt = 0; wt < BIT_DELAY; wt++)
+				asm volatile("nop");
+			continue;
+		}
+		/* If acknowledge is OK */
+		else if (ack == 1)
+		{
+			/* If RnW bit is set, read request */
+			if (req & (1 << 1))
+			{
+				data = swd_rd(32);
+				/* Read parity bit */
+				if (swd_rd(1) != _parity(data))
+					log_puts("SWD: Parity error\r\n");
+				else if (value)
+					*value = data;
+
+				/* Trn cycle to revert initial state */
+				swd_turna(1);
+			}
+			/* Write request */
+			else
+			{
+				if (value)
+					data = *value;
+				else
+					data = 0;
+
+				swd_turna(1);
+				/* Write data to swd bus */
+				swd_wr(data, 32);
+				/* Send parity bit */
+				data = _parity(data);
+				swd_wr(data, 1);
+				swd_idle();
+			}
+			/* Request finished, no retry needed */
 			break;
 		}
 		else
 		{
-			log_puts("DAP: Transfer failed ! ACK=");
+			log_puts("SWD: Transfer failed ! ACK=");
 			log_puthex(ack, 8);
 			log_puts("\r\n");
 			break;
 		}
 	}
 	return(ack);
+}
+
+/**
+ * @brief Set SWD signals to their IDLE state
+ *
+ */
+void swd_idle(void)
+{
+	/* Set SWD-DAT to idle state (1) */
+	ios_pin_set(PIN_SWDIO, 1);
 }
 
 /**
@@ -108,7 +149,7 @@ u32 swd_rd(uint len)
 		/* Falling edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 0);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 
 		bit = ios_pin(PIN_SWDIO);
@@ -116,7 +157,7 @@ u32 swd_rd(uint len)
 		/* Rising edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 1);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 
 		result |= (bit << i);
@@ -138,7 +179,7 @@ void swd_turna(int dir)
 		/* Falling edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 0);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 
 		ios_pin_mode(PIN_SWDIO, IO_DIR_OUT);
@@ -146,7 +187,7 @@ void swd_turna(int dir)
 		/* Rising edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 1);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 	}
 	else
@@ -155,12 +196,12 @@ void swd_turna(int dir)
 		/* Falling edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 0);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 		/* Rising edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 1);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 	}
 }
@@ -183,12 +224,12 @@ void swd_wr(uint32_t v, uint len)
 		/* Falling edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 0);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 		/* Rising edge to SWD-CLK */
 		ios_pin_set(PIN_SWCLK, 1);
 		/* Wait a bit TODO: improve delay */
-		for (wait = 0; wait < WAIT_DELAY; wait++)
+		for (wait = 0; wait < BIT_DELAY; wait++)
 			asm volatile("nop");
 
 		/* Shift byte to select next bit */
