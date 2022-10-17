@@ -29,6 +29,7 @@ extern swd_param swd_config;
 int  swd_transfer(u8 req, u32 *value);
 /* Low level SWD functions */
 void swd_idle(void);
+void swd_io_dir(int dir);
 u32  swd_rd(uint len);
 void swd_turna(int dir);
 void swd_wr(u32 value, uint len);

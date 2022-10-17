@@ -133,6 +133,19 @@ void swd_idle(void)
 }
 
 /**
+ * @brief Force the direction of SWD-IO pin
+ *
+ * @param dir Direction to set (0=IN , 1=OUT)
+ */
+void swd_io_dir(int dir)
+{
+	if (dir)
+		ios_pin_mode(PIN_SWDIO, IO_DIR_OUT);
+	else
+		ios_pin_mode(PIN_SWDIO, IO_DIR_IN);
+}
+
+/**
  * @brief Read bits from SWD port
  *
  * @param len Number of bit(s) to write

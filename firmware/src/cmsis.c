@@ -63,6 +63,7 @@ static inline int dap_info(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_info_cap(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_reset_target(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swd_configure(cmsis_pkt *req, cmsis_pkt *rsp);
+static inline int dap_swd_sequence(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swj_clock(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swj_pins(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp);
@@ -169,10 +170,7 @@ void dap_recv(uint8_t *rx, uint16_t len)
 			break;
 		/* DAP_SWD_Sequence */
 		case 0x1D:
-			/* This command is only available since CMSIS 1.2 */
-			rsp.buffer[1] = 0xFF;
-			rsp.len = 2;
-			result = 0;
+			result = dap_swd_sequence(&req, &rsp);
 			break;
 
 		/* == SWO Commands == */
@@ -557,6 +555,88 @@ static inline int dap_swd_configure(cmsis_pkt *req, cmsis_pkt *rsp)
 
 	rsp->buffer[1] = 0x00; // OK
 	rsp->len = 2;
+	return(0);
+}
+
+/**
+ * @brief Handle DAP_SWD_Sequence command
+ *
+ * This command is used to generate special sequences in SWD mode on the pins
+ * SWDCLK and/or SWDIO.
+ *
+ * @param rep Pointer to the request packet
+ * @param rsp Pointer to a packet where response can be stored
+ * @return integer On success zero is returned, -1 for error
+ */
+static inline int dap_swd_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
+{
+	uint seq_count;
+	u8  *p, *q;
+	int tck_count;
+	int in_out;
+	int len_out = 0;
+	int i, j, l;
+#ifdef DEBUG_CMSIS
+	/* Sanity check */
+	if ((req == 0) || (rsp == 0))
+		return(-1);
+#endif
+	/* Extract number of sequences */
+	seq_count = req->buffer[1];
+
+#ifdef DEBUG_CMSIS_SEQ
+	log_puts("DAP_SWD_Sequence: count="); log_putdec(seq_count);
+#endif
+
+	p = (req->buffer + 2);
+	q = (rsp->buffer + 2);
+	for (i = 0; i < seq_count; i++)
+	{
+		/* Extract number of TCK clock cycle */
+		tck_count = (p[0] & 0x3F);
+		if (tck_count == 0)
+			tck_count = 64;
+
+		// If sequence direction is specified as input
+		if (p[0] & 0x80)
+		{
+#ifdef DEBUG_CMSIS_SEQ
+			log_puts(" IN("); log_putdec(tck_count); log_puts(")");
+#endif
+			// Force SWD-IO pin to input
+			swd_io_dir(IO_DIR_IN);
+			// Read the specified number of bits
+			for (j = tck_count; j > 0; j -= l)
+			{
+				l = (j >= 8) ? 8 : j;
+				*q++ = swd_rd(l);
+			}
+			p++;
+		}
+		// Sequence direction is specified as output
+		else
+		{
+#ifdef DEBUG_CMSIS_SEQ
+			log_puts(" OUT("); log_putdec(tck_count); log_puts(")");
+#endif
+			p++;
+			// Force SWD-IO pin to output
+			swd_io_dir(IO_DIR_OUT);
+			// Write the specified number of bits
+			for (j = tck_count; j > 0; j -= l)
+			{
+				l = (j >= 8) ? 8 : j;
+				swd_wr(*p++, l);
+			}
+		}
+	}
+#ifdef DEBUG_CMSIS_SEQ
+	log_puts("\r\n");
+#endif
+	rsp->buffer[1] = 0x00; // OK
+	rsp->len = (q - rsp->buffer);
+	swd_io_dir(IO_DIR_OUT);
+
 	return(0);
 }
 
