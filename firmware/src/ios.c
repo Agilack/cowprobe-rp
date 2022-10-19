@@ -85,22 +85,22 @@ void ios_mode(int mode)
 	{
 		/* Configure D0 as TDI (input) */
 		ios_pin_mode(PORT_D0_PIN, IO_DIR_IN);
-		/* Configure D1 as TCK (output) */
+		/* Configure D1 as TMS (output) */
 		ios_pin_mode(PORT_D1_PIN, IO_DIR_OUT);
-		gpio_put(PORT_D1_PIN, 1);
-		/* Configure D2 as TMS (output) */
+		gpio_put(PORT_D1_PIN, 0);
+		/* Configure D2 as TCK (output) */
 		ios_pin_mode(PORT_D2_PIN, IO_DIR_OUT);
-		gpio_put(PORT_D2_PIN, 1);
+		gpio_put(PORT_D2_PIN, 0);
 		/* Configure D3 as TDO (output) */
 		ios_pin_mode(PORT_D3_PIN, IO_DIR_OUT);
-		gpio_put(PORT_D3_PIN, 1);
+		gpio_put(PORT_D3_PIN, 0);
 	}
 	else if (mode == PORT_MODE_SWD)
 	{
-		/* Configure D1 as SW-CLK (output) */
+		/* Configure D1 as SW-DAT (output) */
 		ios_pin_mode(PORT_D1_PIN, IO_DIR_OUT);
 		gpio_put(PORT_D1_PIN, 1);
-		/* Configure D2 as SW-DAT (io) */
+		/* Configure D2 as SW-CLK (io) */
 		ios_pin_mode(PORT_D2_PIN, IO_DIR_OUT);
 		gpio_put(PORT_D2_PIN, 1);
 		/* Configure D3 as nReset (output) */

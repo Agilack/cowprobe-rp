@@ -25,13 +25,17 @@
 
 #define DATA_SIZE 1024
 
+static int cmsis_mode;
 static int last_dap_info;
 
+void req_connect(usbmon_pkt *pkt);
+void rsp_connect(usbmon_pkt *pkt);
 void req_dap_info(usbmon_pkt *pkt);
 void rsp_dap_info(usbmon_pkt *pkt);
+void req_jtag_sequence(usbmon_pkt *pkt);
+void rsp_jtag_sequence(usbmon_pkt *pkt);
 void req_swd_sequence(usbmon_pkt *pkt);
 void req_swj_pins(usbmon_pkt *pkt);
-void rsp_connect(usbmon_pkt *pkt);
 void rsp_swj_pins(usbmon_pkt *pkt);
 void req_swj_sequence(usbmon_pkt *pkt);
 
@@ -63,6 +67,8 @@ int main(int argc, char **argv)
 		perror("");
 		return 1;
 	}
+
+	cmsis_mode = -1;
 
 	memset(&hdr, 0, sizeof hdr);
 	event.hdr  = &hdr;
@@ -123,7 +129,7 @@ int main(int argc, char **argv)
 			{
 				case 0x00: req_dap_info(&event); break;
 				case 0x01: printf("DAP_HostStatus"); break;
-				case 0x02: printf("DAP_Connect");    break;
+				case 0x02: req_connect(&event);  break;
 				case 0x03: printf("DAP_Disconnect"); break;
 				case 0x04: printf("DAP_TransferConfigure"); break;
 				case 0x05: printf("DAP_Transfer");   break;
@@ -131,6 +137,9 @@ int main(int argc, char **argv)
 				case 0x11: printf("DAP_SWJ_Clock");  break;
 				case 0x12: req_swj_sequence(&event); break;
 				case 0x13: printf("DAP_SWD_Configure"); break;
+				case 0x14: req_jtag_sequence(&event); break;
+				case 0x15: printf("DAP_JTAG_Configure"); break;
+				case 0x16: printf("DAP_JTAG_IDCODE");    break;
 				case 0x1D: req_swd_sequence(&event); break;
 			}
 			printf("\x1B[0m\n");
@@ -153,6 +162,9 @@ int main(int argc, char **argv)
 				case 0x11: printf("Recv: DAP_SWJ_Clock");     break;
 				case 0x12: printf("Recv: DAP_SWJ_Sequence");  break;
 				case 0x13: printf("Recv: DAP_SWD_Configure"); break;
+				case 0x14: rsp_jtag_sequence(&event);      break;
+				case 0x15: printf("Recv: DAP_JTAG_Configure"); break;
+				case 0x16: printf("Recv: DAP_JTAG_IDCODE");    break;
 				case 0x1D: printf("Recv: DAP_SWD_Sequence");  break;
 			}
 			printf("\x1B[0m\n");
@@ -162,6 +174,28 @@ int main(int argc, char **argv)
 	close(fd);
 
 	return 0;
+}
+
+/**
+ * @brief Analyse and decode a DAP_Connect request
+ *
+ * @param pkt Pointer to the received usbmon packet
+ */
+void req_connect(usbmon_pkt *pkt)
+{
+	// Sanity check
+	if ((pkt == 0) || (pkt->hdr->length < 2) || (pkt->data[0] != 0x02))
+		return;
+
+	printf("Send: DAP_Connect try to connect in ");
+	if (pkt->data[1] == 0)
+		printf("Default mode");
+	else if (pkt->data[1] == 1)
+		printf("SWD mode");
+	else if (pkt->data[1] == 2)
+		printf("JTAG");
+	else
+		printf("Unknown mode (%x)", pkt->data[1]);
 }
 
 /**
@@ -177,11 +211,20 @@ void rsp_connect(usbmon_pkt *pkt)
 
 	printf("Recv: DAP_Connect");
 	if (pkt->data[1] == 1)
+	{
+		cmsis_mode = 1;
 		printf(" mode=SWD");
+	}
 	else if (pkt->data[1] == 2)
+	{
+		cmsis_mode = 2;
 		printf(" mode=JTAG");
+	}
 	else if (pkt->data[1] == 0)
+	{
+		cmsis_mode = -1;
 		printf(" FAILED");
+	}
 	else
 		printf(" Unknown result %x", pkt->data[1]);
 }
@@ -258,6 +301,45 @@ void rsp_dap_info(usbmon_pkt *pkt)
 }
 
 /**
+ * @brief Analyze and decode a DAP_JTAG_Sequence request
+ *
+ * @param pkt Pointer to the received usbmon packet
+ */
+void req_jtag_sequence(usbmon_pkt *pkt)
+{
+	unsigned int seq_count;
+
+	// Sanity check
+	if ((pkt == 0) || (pkt->hdr->length < 2) || (pkt->data[0] != 0x14))
+		return;
+
+	// Extract number of sequences of this request
+	seq_count = pkt->data[1];
+
+	printf("Send: DAP_JTAG_Sequence (%d) ", seq_count);
+}
+
+/**
+ * @brief Analyze and decode a DAP_JTAG_Sequence response
+ *
+ * @param pkt Pointer to the received usbmon packet
+ */
+void rsp_jtag_sequence(usbmon_pkt *pkt)
+{
+	// Sanity check
+	if ((pkt == 0) || (pkt->hdr->length < 2) || (pkt->data[0] != 0x14))
+		return;
+
+	printf("Recv: DAP_JTAG_Sequence result=");
+	if (pkt->data[1] == 0)
+		printf("OK");
+	else if (pkt->data[1] == 0xFF)
+		printf("Error");
+	else
+		printf("Unknown");
+}
+
+/**
  * @brief Analyze and decode a DAP_SWD_Sequence request
  *
  * @param pkt Pointer to the received usbmon packet
@@ -305,6 +387,8 @@ void req_swd_sequence(usbmon_pkt *pkt)
  */
 void req_swj_pins(usbmon_pkt *pkt)
 {
+	u32 wait;
+
 	// Sanity check
 	if ((pkt == 0) || (pkt->data[0] != 0x10))
 		return;
@@ -314,12 +398,44 @@ void req_swj_pins(usbmon_pkt *pkt)
 
 	printf("Send: DAP_SWJ_Pins");
 
-	if (pkt->data[2] & 1)
-		printf(" SWCLK=%d", (pkt->data[1] & 1) ? 1 : 0);
-	if (pkt->data[2] & 2)
-		printf(" SWDIO=%d", (pkt->data[1] & 2) ? 1 : 0);
+	if (pkt->data[2] & (1 << 0))
+	{
+		if (cmsis_mode == 1)
+			printf(" SWCLK");
+		else if (cmsis_mode == 2)
+			printf(" TCK");
+		else
+			printf(" CLK");
+		printf("=%d", (pkt->data[1] & (1 << 0)) ? 1 : 0);
+	}
+	if (pkt->data[2] & (1 << 1))
+	{
+		if (cmsis_mode == 1)
+			printf(" SWDIO");
+		else if (cmsis_mode == 2)
+			printf(" TMS");
+		else
+			printf(" ???");
+		printf("=%d", (pkt->data[1] & (1 << 1)) ? 1 : 0);
+	}
+	if (pkt->data[2] & (1 << 2))
+	{
+		printf("TDI=%d", (pkt->data[1] & (1 << 2)) ? 1 : 0);
+	}
+	if (pkt->data[2] & (1 << 3))
+	{
+		printf("TDO=%d", (pkt->data[1] & (1 << 3)) ? 1 : 0);
+	}
 	if (pkt->data[2] & 0x80)
 		printf(" nReset=%d", (pkt->data[1] & 0x80) ? 1 : 0);
+
+	wait  = (pkt->data[3] << 0)  | (pkt->data[4] << 8);
+	wait |= (pkt->data[5] << 16) | (pkt->data[6] << 24);
+	if (wait)
+		printf(" and wait %d us", wait);
+	else
+		printf(" (no wait)");
+
 	return;
 
 err_malformed:
@@ -340,9 +456,20 @@ void rsp_swj_pins(usbmon_pkt *pkt)
 
 	printf("Recv: DAP_SWJ_Pins");
 
-	printf(" SWCLK=%d",  (pkt->data[1] & 0x01) ? 1 : 0);
-	printf(" SWDIO=%d",  (pkt->data[1] & 0x02) ? 1 : 0);
-	printf(" nReset=%d", (pkt->data[1] & 0x80) ? 1 : 0);
+	if (cmsis_mode == 1)
+	{
+		printf(" SWCLK=%d",  (pkt->data[1] & 0x01) ? 1 : 0);
+		printf(" SWDIO=%d",  (pkt->data[1] & 0x02) ? 1 : 0);
+		printf(" nReset=%d", (pkt->data[1] & 0x80) ? 1 : 0);
+	}
+	else if (cmsis_mode == 2)
+	{
+		printf(" TCK=%d",  (pkt->data[1] & 0x01) ? 1 : 0);
+		printf(" TMS=%d",  (pkt->data[1] & 0x02) ? 1 : 0);
+		printf(" TDI=%d",  (pkt->data[1] & 0x04) ? 1 : 0);
+		printf(" TDO=%d",  (pkt->data[1] & 0x08) ? 1 : 0);
+		printf(" nReset=%d", (pkt->data[1] & 0x80) ? 1 : 0);
+	}
 }
 
 /**

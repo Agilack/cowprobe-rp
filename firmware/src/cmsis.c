@@ -61,6 +61,7 @@ static inline int dap_disconnect(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_host_status(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_info(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_info_cap(cmsis_pkt *req, cmsis_pkt *rsp);
+static inline int dap_jtag_sequence(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_reset_target(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swd_configure(cmsis_pkt *req, cmsis_pkt *rsp);
 static inline int dap_swd_sequence(cmsis_pkt *req, cmsis_pkt *rsp);
@@ -171,6 +172,27 @@ void dap_recv(uint8_t *rx, uint16_t len)
 		/* DAP_SWD_Sequence */
 		case 0x1D:
 			result = dap_swd_sequence(&req, &rsp);
+			break;
+
+		/* == JTAG Commands */
+
+		/* DAP_JTAG_Sequence */
+		case 0x14:
+			result = dap_jtag_sequence(&req, &rsp);
+			break;
+		/* DAP_JTAG_Configure */
+		case 0x15:
+			log_puts("CMSIS: DAP_JTAG_Configure\r\n");
+			rsp.buffer[1] = 0xFF;
+			rsp.len = 2;
+			result = 0;
+			break;
+		/* DAP_JTAG_IDCODE */
+		case 0x16:
+			log_puts("CMSIS: DAP_JTAG_IDCODE\r\n");
+			rsp.buffer[1] = 0xFF;
+			rsp.len = 2;
+			result = 0;
 			break;
 
 		/* == SWO Commands == */
@@ -498,6 +520,98 @@ static inline int dap_info_cap(cmsis_pkt *req, cmsis_pkt *rsp)
 }
 
 /**
+ * @brief Handle DAP_JTAG_Sequence command
+ *
+ * This command generate sequences on TMS/TDI and capture TDO.
+ *
+ * @param rep Pointer to the request packet
+ * @param rsp Pointer to a packet where response can be stored
+ * @return integer On success zero is returned, -1 for error
+ */
+#define BIT_DELAY  80
+static inline int dap_jtag_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
+{
+	uint seq_count;
+	uint tck_count;
+	u8  *p, *q;
+	uint tms, capture;
+	int i, j, k, l;
+	u8 v_tdo, v_tdi;
+	uint wait;
+
+#ifdef DEBUG_CMSIS
+	/* Sanity check */
+	if ((req == 0) || (rsp == 0))
+		return(-1);
+#endif
+	/* Extract number of sequences */
+	seq_count = req->buffer[1];
+
+#ifdef DEBUG_CMSIS_JTAG
+	log_puts("DAP_JTAG_Sequence: count="); log_putdec(seq_count);
+	log_puts("\r\n");
+#endif
+	p = (req->buffer + 2);
+	q = (rsp->buffer + 2);
+	for (i = 0; i < seq_count; i++)
+	{
+		/* Extract number of TCK clock cycle */
+		tck_count = (*p & 0x3F);
+		if (tck_count == 0)
+			tck_count = 64;
+		/* Extract TMS value */
+		tms = (*p & (1 << 6)) ?  1 : 0;
+		/* Is data capture enabled ? */
+		capture = (*p & (1 << 7)) ?  1 : 0;
+#ifdef DEBUG_CMSIS_JTAG
+		log_puts(" TCK="); log_putdec(tck_count);
+		log_puts(",TMS="); log_putdec(tms);
+		log_puts(",capture="); log_putdec(capture);
+		log_puts("  ");
+#endif
+		/* First, set TMS value */
+		ios_pin_set(PORT_D1_PIN, tms);
+
+		p++;
+		l = 0;
+		for (j = tck_count; j > 0; j -= l)
+		{
+			l = (j >= 8) ? 8 : j;
+			v_tdo = *p;
+			for (k = 0; k < l; k++)
+			{
+				/* Set next TDO bit */
+				ios_pin_set(PORT_D3_PIN, (v_tdo & 1));
+				v_tdo = (v_tdo >> 1);
+
+				/* Rising edge to TCK */
+				ios_pin_set(PORT_D2_PIN, 1);
+				/* Wait a bit TODO: improve delay */
+				for (wait = 0; wait < BIT_DELAY; wait++)
+					asm volatile("nop");
+				/* Falling edge to TCK */
+				ios_pin_set(PORT_D2_PIN, 0);
+
+				/* Get next input bit */
+				v_tdi = (v_tdi << 1);
+				v_tdi |= ios_pin(PORT_D0_PIN);
+				/* Wait a bit TODO: improve delay */
+				for (wait = 0; wait < BIT_DELAY; wait++)
+					asm volatile("nop");
+			}
+			p++;
+			if (capture)
+				*q++ = v_tdi;
+		}
+	}
+
+	rsp->buffer[1] = 0x00; // OK
+	rsp->len = (q - rsp->buffer);;
+
+	return(0);
+}
+
+/**
  * @brief Handle DAP_ResetTarget command
  *
  * This command request a target reset with device specific sequence.
@@ -790,7 +904,34 @@ static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 		v = *p;
 		bit_rem = (bit_count - bit_sent);
 		len = (bit_rem > 8) ? 8 : bit_rem;
-		swd_wr(v, len);
+		/* Process in SWD mode */
+		if (cmsis_mode == 1)
+			swd_wr(v, len);
+		/* Process in JTAG mode */
+		else
+		{
+			unsigned int wait;
+			unsigned int i;
+			for (i = 0; i < len ; i++)
+			{
+				/* Set next bit to TMS */
+				if (v & 1) ios_pin_set(PORT_D1_PIN, 1);
+				else       ios_pin_set(PORT_D1_PIN, 0);
+				/* Rising edge to TCK */
+				ios_pin_set(PORT_D2_PIN, 1);
+				/* Wait a bit TODO: improve delay */
+				for (wait = 0; wait < BIT_DELAY; wait++)
+					asm volatile("nop");
+				/* Falling edge to TCK */
+				ios_pin_set(PORT_D2_PIN, 0);
+				/* Wait a bit TODO: improve delay */
+				for (wait = 0; wait < BIT_DELAY; wait++)
+					asm volatile("nop");
+
+				/* Shift byte to select next bit */
+				v = (v >> 1);
+			}
+		}
 		/* Update counter of processed bits */
 		bit_sent += len;
 		p++;
