@@ -32,6 +32,28 @@ swd_param swd_config;
 static inline uint _parity(uint32_t value);
 
 /**
+ * @brief Activate the debug port in SWD mode
+ *
+ * @result integer Zero is returuned on success
+ */
+int swd_connect(void)
+{
+	ios_mode(PORT_MODE_SWD);
+	return(0);
+}
+
+/**
+ * @brief Terminate session and disconnect port
+ *
+ * @return integer Zero is returned on success
+ */
+int swd_disconnect(void)
+{
+	ios_mode(PORT_MODE_HIZ);
+	return(0);
+}
+
+/**
  * @brief Process one SWD transfer on the bus
  *
  * @param req Identifier of the SWD request

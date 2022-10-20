@@ -21,6 +21,7 @@ add_executable(${PROJECT_NAME}
 	src/serial.c
 	src/usb.c
 	src/log.c
+	src/jtag.c
 	src/cmsis.c
 	src/swd.c
 )

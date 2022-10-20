@@ -15,6 +15,7 @@
  */
 #include "pico/stdlib.h"
 #include "ios.h"
+#include "jtag.h"
 #include "log.h"
 #include "cmsis.h"
 #include "swd.h"
@@ -286,25 +287,29 @@ static inline int dap_connect(cmsis_pkt *req, cmsis_pkt *rsp)
 	/* If request port is SWD (or Default) */
 	if ((req->buffer[1] == 1) || (req->buffer[1] == 0))
 	{
-		cmsis_mode = 1;
-		ios_mode(PORT_MODE_SWD);
+		if (swd_connect() == 0)
+			cmsis_mode = 1; // Success, now in SWD mode
+		else
+			cmsis_mode = 0; // Failed
+
 		swd_config.retry_count = dap_retry_wait;
-		/* Response: cmsis mode is now SWD */
-		rsp->buffer[1] = 0x01;
+		rsp->buffer[1] = cmsis_mode;
 	}
 	/* If request port is JTAG */
 	else if (req->buffer[1] == 2)
 	{
-		cmsis_mode = 2;
-		ios_mode(PORT_MODE_JTAG);
-		/* Response: cmsis mode is now JTAG */
-		rsp->buffer[1] = 0x02;
+		if (jtag_connect() == 0)
+			cmsis_mode = 2; // Success, now in JTAG mode
+		else
+			cmsis_mode = 0; // Failed
+
+		rsp->buffer[1] = cmsis_mode;
 	}
 	/* For all other ports, Initialization Failed */
 	else
 		rsp->buffer[1] = 0x00;
 
-	rsp->buffer[0] = 2;
+	rsp->buffer[0] = 0x02;
 	rsp->len = 2;
 
 	return(0);
@@ -327,6 +332,8 @@ static inline int dap_delay(cmsis_pkt *req, cmsis_pkt *rsp)
 	/* Sanity check */
 	if ((req == 0) || (rsp == 0))
 		return(-1);
+#else
+	(void)req;
 #endif
 	log_puts("CMSIS: Delay (not supported yet)\r\n");
 
@@ -352,8 +359,15 @@ static inline int dap_disconnect(cmsis_pkt *req, cmsis_pkt *rsp)
 		return(-1);
 
 	log_puts("CMSIS: Disconnect\r\n");
+#else
+	(void)req;
 #endif
-	ios_mode(PORT_MODE_HIZ);
+	if (cmsis_mode == 2)
+		jtag_disconnect();
+	else if (cmsis_mode == 1)
+		swd_disconnect();
+	else
+		ios_mode(PORT_MODE_HIZ);
 
 	rsp->buffer[1] = 0x00; // OK
 	rsp->len = 2;
@@ -376,6 +390,8 @@ static inline int dap_host_status(cmsis_pkt *req, cmsis_pkt *rsp)
 		return(-1);
 
 	log_puts("CMSIS: HostStatus\r\n");
+#else
+	(void)req;
 #endif
 
 	rsp->buffer[1] = 0x00; // OK
@@ -511,6 +527,8 @@ static inline int dap_info_cap(cmsis_pkt *req, cmsis_pkt *rsp)
 		return(-1);
 
 	log_puts("CMSIS: Get Capabilities\r\n");
+#else
+	(void)req;
 #endif
 	rsp->buffer[1] = 1;
 	rsp->buffer[2] = (1 << 0) | // SWD is supported
@@ -528,16 +546,14 @@ static inline int dap_info_cap(cmsis_pkt *req, cmsis_pkt *rsp)
  * @param rsp Pointer to a packet where response can be stored
  * @return integer On success zero is returned, -1 for error
  */
-#define BIT_DELAY  80
 static inline int dap_jtag_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 {
 	uint seq_count;
 	uint tck_count;
 	u8  *p, *q;
 	uint tms, capture;
+	uint din, dmask;
 	int i, j, k, l;
-	u8 v_tdo, v_tdi;
-	uint wait;
 
 #ifdef DEBUG_CMSIS
 	/* Sanity check */
@@ -551,6 +567,7 @@ static inline int dap_jtag_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 	log_puts("DAP_JTAG_Sequence: count="); log_putdec(seq_count);
 	log_puts("\r\n");
 #endif
+	dmask = 0x80;
 	p = (req->buffer + 2);
 	q = (rsp->buffer + 2);
 	for (i = 0; i < seq_count; i++)
@@ -567,43 +584,41 @@ static inline int dap_jtag_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 		log_puts(" TCK="); log_putdec(tck_count);
 		log_puts(",TMS="); log_putdec(tms);
 		log_puts(",capture="); log_putdec(capture);
-		log_puts("  ");
+		log_puts(" ");
 #endif
-		/* First, set TMS value */
-		ios_pin_set(PORT_D1_PIN, tms);
-
-		p++;
-		l = 0;
+		p++; // Move to next byte into request buffer
 		for (j = tck_count; j > 0; j -= l)
 		{
 			l = (j >= 8) ? 8 : j;
-			v_tdo = *p;
-			for (k = 0; k < l; k++)
+			if (capture == 0)
+				jtag_rshift(*p++, l, tms);
+			else
 			{
-				/* Set next TDO bit */
-				ios_pin_set(PORT_D3_PIN, (v_tdo & 1));
-				v_tdo = (v_tdo >> 1);
-
-				/* Rising edge to TCK */
-				ios_pin_set(PORT_D2_PIN, 1);
-				/* Wait a bit TODO: improve delay */
-				for (wait = 0; wait < BIT_DELAY; wait++)
-					asm volatile("nop");
-				/* Falling edge to TCK */
-				ios_pin_set(PORT_D2_PIN, 0);
-
-				/* Get next input bit */
-				v_tdi = (v_tdi << 1);
-				v_tdi |= ios_pin(PORT_D0_PIN);
-				/* Wait a bit TODO: improve delay */
-				for (wait = 0; wait < BIT_DELAY; wait++)
-					asm volatile("nop");
+				din = jtag_rshift(*p++, l, tms);
+				// Insert received bits into response buffer
+				for (k = 0; k < l; k++)
+				{
+					if (din & (0x80 >> k))
+						*q |= dmask;
+					dmask = (dmask >> 1);
+					if (dmask == 0)
+					{
+						dmask = 0x80;
+						q++;
+						*q = 0;
+					}
+				}
 			}
-			p++;
-			if (capture)
-				*q++ = v_tdi;
 		}
 	}
+#ifdef DEBUG_CMSIS_JTAG
+	if (seq_count > 0)
+	{
+		log_puts("\r\nDAP_JTAG_Sequence response len=");
+		log_putdec(q - rsp->buffer);
+		log_puts("\r\n");
+	}
+#endif
 
 	rsp->buffer[1] = 0x00; // OK
 	rsp->len = (q - rsp->buffer);;
@@ -628,6 +643,8 @@ static inline int dap_reset_target(cmsis_pkt *req, cmsis_pkt *rsp)
 	/* Sanity check */
 	if ((req == 0) || (rsp == 0))
 		return(-1);
+#else
+	(void)req;
 #endif
 	log_puts("CMSIS: ResetTarget (not supported yet)\r\n");
 
@@ -687,8 +704,6 @@ static inline int dap_swd_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 	uint seq_count;
 	u8  *p, *q;
 	int tck_count;
-	int in_out;
-	int len_out = 0;
 	int i, j, l;
 #ifdef DEBUG_CMSIS
 	/* Sanity check */
@@ -880,7 +895,7 @@ static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 {
 	unsigned char *p, v;
 	int bit_count, bit_sent, bit_rem;
-	int len, wait;
+	int len;
 
 #ifdef DEBUG_CMSIS
 	/* Sanity check */
@@ -904,34 +919,13 @@ static inline int dap_swj_sequence(cmsis_pkt *req, cmsis_pkt *rsp)
 		v = *p;
 		bit_rem = (bit_count - bit_sent);
 		len = (bit_rem > 8) ? 8 : bit_rem;
-		/* Process in SWD mode */
+
+		/* Process according to port mode */
 		if (cmsis_mode == 1)
 			swd_wr(v, len);
-		/* Process in JTAG mode */
 		else
-		{
-			unsigned int wait;
-			unsigned int i;
-			for (i = 0; i < len ; i++)
-			{
-				/* Set next bit to TMS */
-				if (v & 1) ios_pin_set(PORT_D1_PIN, 1);
-				else       ios_pin_set(PORT_D1_PIN, 0);
-				/* Rising edge to TCK */
-				ios_pin_set(PORT_D2_PIN, 1);
-				/* Wait a bit TODO: improve delay */
-				for (wait = 0; wait < BIT_DELAY; wait++)
-					asm volatile("nop");
-				/* Falling edge to TCK */
-				ios_pin_set(PORT_D2_PIN, 0);
-				/* Wait a bit TODO: improve delay */
-				for (wait = 0; wait < BIT_DELAY; wait++)
-					asm volatile("nop");
+			jtag_tms_sequence(v, len);
 
-				/* Shift byte to select next bit */
-				v = (v >> 1);
-			}
-		}
 		/* Update counter of processed bits */
 		bit_sent += len;
 		p++;
@@ -1129,6 +1123,8 @@ static inline int dap_write_abort(cmsis_pkt *req, cmsis_pkt *rsp)
 	/* Sanity check */
 	if ((req == 0) || (rsp == 0))
 		return(-1);
+#else
+	(void)req;
 #endif
 	log_puts("CMSIS: WriteABORT not supported yet\r\n");
 
@@ -1245,6 +1241,7 @@ err:
  */
 void cmsis_usb_reset(uint8_t rhport)
 {
+	(void)rhport;
 #ifdef DEBUG_CMSIS_USB
 	log_puts("cmsis_usb_reset()\r\n");
 #endif
@@ -1258,9 +1255,13 @@ void cmsis_usb_reset(uint8_t rhport)
  */
 bool cmsis_usb_ctl(uint8_t rhport, uint8_t stage, tusb_control_request_t const* req)
 {
+	(void)rhport;
+	(void)stage;
+	(void)req;
 #ifdef DEBUG_CMSIS_USB
 	log_puts("cmsis_usb_ctl()\r\n");
 #endif
+	return(1);
 }
 
 /**
@@ -1271,14 +1272,14 @@ bool cmsis_usb_ctl(uint8_t rhport, uint8_t stage, tusb_control_request_t const* 
  */
 bool cmsis_usb_xfer(uint8_t rhport, uint8_t ep, xfer_result_t result, uint32_t xferred_bytes)
 {
-	int i;
-
 #ifdef DBG_XFER
 	log_puts("cmsis_usb_xfer()");
 	log_puts(" ep=");     log_puthex(ep, 8);
 	log_puts(" result="); log_puthex(result, 32);
 	log_puts(" len=");    log_puthex(xferred_bytes, 16);
 	log_puts("\r\n");
+#else
+	(void)result;
 #endif
 
 	if (ep == ep_out_n)

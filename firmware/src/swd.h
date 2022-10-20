@@ -26,6 +26,9 @@ typedef struct swd_param_s
 
 extern swd_param swd_config;
 
+int  swd_connect(void);
+int  swd_disconnect(void);
+
 int  swd_transfer(u8 req, u32 *value);
 /* Low level SWD functions */
 void swd_idle(void);
